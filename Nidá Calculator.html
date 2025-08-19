@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Calculadora de Onot de Nidá</title>
+<style>
+  body { 
+    font-family: Arial, sans-serif; 
+    margin: 20px; 
+    background: #f8f8f8; 
+    max-width: 800px;
+    margin: 20px auto;
+  }
+  h1 { 
+    color: #444; 
+    text-align: center;
+  }
+  .form-container {
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    margin-bottom: 20px;
+  }
+  .result { 
+    padding: 15px; 
+    margin: 10px 0; 
+    border-radius: 8px; 
+    border-left: 4px solid #ccc;
+    background: white;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+  }
+  .day { 
+    background-color: #fff7c2; 
+    border-left-color: #f4c430;
+  }
+  .night { 
+    background-color: #c2d9ff; 
+    border-left-color: #4169e1;
+  }
+  .shabbat { 
+    border: 2px solid #dc3545; 
+    background-color: #ffe6e6;
+  }
+  label { 
+    display: block; 
+    margin-top: 15px; 
+    font-weight: bold;
+    color: #555;
+  }
+  input, select, button { 
+    padding: 8px 12px; 
+    margin-top: 5px; 
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 14px;
+  }
+  button {
+    background-color: #007bff;
+    color: white;
+    border: none;
+    cursor: pointer;
+    font-weight: bold;
+    margin-top: 15px;
+  }
+  button:hover {
+    background-color: #0056b3;
+  }
+  .error {
+    color: #dc3545;
+    background-color: #f8d7da;
+    border: 1px solid #f5c6cb;
+    padding: 10px;
+    border-radius: 4px;
+    margin: 10px 0;
+  }
+</style>
+</head>
+<body>
+<h1>Calculadora de Onot de Nidá</h1>
+<div class="form-container">
+  <label for="lastDate">Fecha última menstruación (gregoriana):</label>
+  <input type="date" id="lastDate">
+  
+  <label for="lastOna">Oná:</label>
+  <select id="lastOna">
+    <option value="day">Día</option>
+    <option value="night">Noche</option>
+  </select>
+  
+  <label for="previousCycle">Duración del ciclo anterior (días) - opcional para Haflagá:</label>
+  <input type="number" id="previousCycle" min="20" max="40" placeholder="Ej: 28">
+  
+  <button onclick="calculate()">Calcular</button>
+</div>
+
+<div id="results"></div>
+
+<script>
+// Algoritmo simplificado pero más preciso para conversión de fechas
+// Basado en el algoritmo de Dershowitz-Reingold
+
+function isHebrewLeapYear(year) {
+  return ((7 * year + 1) % 19) < 7;
+}
+
+function hebrewYearLength(year) {
+  return isHebrewLeapYear(year) ? 383 : 354;
+}
+
+function gregorianToHebrew(gregorianDate, timeOfDay = 'day') {
+  // Usamos Intl con calendario hebreo para obtener una conversión fiable
+  // Si la oná es de noche, avanzamos un día gregoriano para reflejar que la fecha hebrea ya cambió
+  const dateForHebrew = new Date(gregorianDate);
+  if (timeOfDay === 'night') {
+    dateForHebrew.setDate(dateForHebrew.getDate() + 1);
+  }
+
+  const formatter = new Intl.DateTimeFormat('en-u-ca-hebrew', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  });
+  const parts = formatter.formatToParts(dateForHebrew);
+  const yearStr = parts.find(p => p.type === 'year')?.value;
+  const monthName = parts.find(p => p.type === 'month')?.value;
+  const dayStr = parts.find(p => p.type === 'day')?.value;
+
+  const year = parseInt(yearStr, 10);
+  const day = parseInt(dayStr, 10);
+
+  // Mapeo de nombres de meses (en inglés) a numeración Tishrei=1 ...
+  const monthOrderNonLeap = ['Tishri','Heshvan','Kislev','Tevet','Shevat','Adar','Nisan','Iyar','Sivan','Tammuz','Av','Elul'];
+  const monthOrderLeap = ['Tishri','Heshvan','Kislev','Tevet','Shevat','Adar I','Nisan','Iyar','Sivan','Tammuz','Av','Elul','Adar II'];
+  const isLeap = isHebrewLeapYear(year);
+  const order = isLeap ? monthOrderLeap : monthOrderNonLeap;
+
+  // Normalizamos algunas variantes comunes por seguridad
+  function normalize(name) {
+    return name.replace(/ı/g, 'i')
+               .replace(/ï/g, 'i')
+               .replace(/í/g, 'i')
+               .replace(/á/g, 'a')
+               .replace(/é/g, 'e')
+               .replace(/ó/g, 'o')
+               .replace(/ú/g, 'u');
+  }
+
+  const idx = order.findIndex(m => normalize(m).toLowerCase() === normalize(monthName).toLowerCase());
+  // En algunos navegadores el mes puede venir como 'Tishrei' en vez de 'Tishri'
+  const fallbackIdx = idx === -1 ? order.findIndex(m => normalize(m.replace('Tishri', 'Tishrei')).toLowerCase() === normalize(monthName).toLowerCase()) : idx;
+  const month = (fallbackIdx >= 0 ? fallbackIdx : 0) + 1;
+
+  return { year, month, day };
+}
+
+function getHebrewMonthLength(month, year) {
+  const isLeap = isHebrewLeapYear(year);
+  
+  // Meses con 30 días: Nisán (7), Siván (9), Av (11), Tishrei (1), Shvat (5)
+  // Meses con 29 días: Iyar (8), Tamuz (10), Elul (12), Tevet (4)
+  // Variables: Jeshván (2), Kislev (3)
+  // En año bisiesto: Adar I (6) tiene 30, Adar II (7) tiene 29
+  
+  if (month === 1 || month === 5) return 30; // Tishrei, Shvat
+  if (month === 4 || month === 8 || month === 10 || month === 12) return 29; // Tevet, Iyar, Tamuz, Elul
+  if (month === 7 || month === 9 || month === 11) return 30; // Nisán, Siván, Av
+  
+  // Meses variables
+  if (month === 2) { // Jeshván
+    // Aproximación: en años "completos" tiene 30 días, en años "deficientes" 29
+    return (year % 3 === 0) ? 30 : 29;
+  }
+  if (month === 3) { // Kislev
+    // Aproximación: en años "abundantes" tiene 30 días, en años "regulares" 29
+    return (year % 3 === 1) ? 30 : 29;
+  }
+  
+  // Meses de año bisiesto
+  if (isLeap) {
+    if (month === 6) return 30; // Adar I
+    if (month === 13) return 29; // Adar II (renumerado como 13)
+  } else {
+    if (month === 6) return 29; // Adar normal
+  }
+  
+  return 29; // Default
+}
+
+function addHebrewMonth(hebrewDate) {
+  let newYear = hebrewDate.year;
+  let newMonth = hebrewDate.month + 1;
+  let newDay = hebrewDate.day;
+  
+  const maxMonths = isHebrewLeapYear(newYear) ? 13 : 12;
+  
+  if (newMonth > maxMonths) {
+    newMonth = 1;
+    newYear++;
+  }
+  
+  // Ajustar día si el nuevo mes es más corto
+  const maxDays = getHebrewMonthLength(newMonth, newYear);
+  if (newDay > maxDays) {
+    newDay = maxDays;
+  }
+  
+  return { year: newYear, month: newMonth, day: newDay };
+}
+
+function hebrewToGregorian(hebrewDate, timeOfDay = 'day') {
+  // Fecha base CORRECTA: 16 de Av 5785 = 10 de agosto 2025
+  const baseGregorian = new Date(2025, 7, 10); // 10 agosto 2025
+  const baseYear = 5785;
+  const baseMonth = 11; // Av
+  const baseDay = 16;
+  
+  let totalDays = 0;
+  
+  // Diferencia en años
+  if (hebrewDate.year !== baseYear) {
+    if (hebrewDate.year > baseYear) {
+      for (let y = baseYear; y < hebrewDate.year; y++) {
+        totalDays += hebrewYearLength(y);
+      }
+    } else {
+      for (let y = hebrewDate.year; y < baseYear; y++) {
+        totalDays -= hebrewYearLength(y);
+      }
+    }
+  }
+  
+  // Diferencia en meses del mismo año
+  if (hebrewDate.month !== baseMonth) {
+    if (hebrewDate.month > baseMonth) {
+      for (let m = baseMonth; m < hebrewDate.month; m++) {
+        totalDays += getHebrewMonthLength(m, hebrewDate.year);
+      }
+    } else {
+      for (let m = hebrewDate.month; m < baseMonth; m++) {
+        totalDays -= getHebrewMonthLength(m, hebrewDate.year);
+      }
+    }
+  }
+  
+  // Diferencia en días
+  totalDays += (hebrewDate.day - baseDay);
+  
+  // CORRECCIÓN: NO restar día para noche
+  // El día hebreo de noche corresponde al mismo día gregoriano
+  // La noche hebrea comienza al atardecer del día gregoriano
+  
+  const result = new Date(baseGregorian);
+  result.setDate(result.getDate() + totalDays);
+  return result;
+}
+
+function formatHebrewDate(hebrewDate) {
+  const monthNames = {
+    1: 'Tishrei', 2: 'Jeshván', 3: 'Kislev', 4: 'Tevet', 5: 'Shvat',
+    6: 'Adar', 7: 'Nisán', 8: 'Iyar', 9: 'Siván', 10: 'Tamuz',
+    11: 'Av', 12: 'Elul', 13: 'Adar II'
+  };
+  
+  // En años bisiestos, Adar se convierte en Adar I y mes 13 es Adar II
+  let monthName = monthNames[hebrewDate.month];
+  if (isHebrewLeapYear(hebrewDate.year) && hebrewDate.month === 6) {
+    monthName = 'Adar I';
+  }
+  
+  return `${hebrewDate.day} de ${monthName} ${hebrewDate.year}`;
+}
+
+// Busca la siguiente fecha gregoriana cuya fecha hebrea tenga el mismo día (del mes hebreo)
+// y que esté en el siguiente mes hebreo (Véset Hachodesh)
+function findNextHebrewSameDayNextMonth(gregorianDate, timeOfDay = 'day') {
+  const startHeb = gregorianToHebrew(gregorianDate, timeOfDay);
+  const targetDay = startHeb.day;
+
+  const probe = new Date(gregorianDate);
+  // empezamos desde el día siguiente para buscar el próximo mes
+  probe.setDate(probe.getDate() + 1);
+
+  // límite de seguridad de ~400 días
+  for (let i = 0; i < 400; i++) {
+    const h = gregorianToHebrew(probe, timeOfDay);
+    if (h.day === targetDay && h.month !== startHeb.month) {
+      return new Date(probe);
+    }
+    probe.setDate(probe.getDate() + 1);
+  }
+  // si no se encuentra (muy improbable), devolvemos 30 días como aproximación segura
+  const fallback = new Date(gregorianDate);
+  fallback.setDate(fallback.getDate() + 30);
+  return fallback;
+}
+
+function calculate() {
+  const lastDateStr = document.getElementById('lastDate').value;
+  const lastOna = document.getElementById('lastOna').value;
+  const previousCycleStr = document.getElementById('previousCycle').value;
+  
+  if (!lastDateStr) {
+    showError('Por favor, ingresa la fecha de la última menstruación.');
+    return;
+  }
+  
+  const lastDate = new Date(lastDateStr + 'T12:00:00'); // Forzar hora medio día para evitar zona horaria
+  
+  // Verificar que la fecha no sea futura
+  if (lastDate > new Date()) {
+    showError('La fecha no puede ser en el futuro.');
+    return;
+  }
+  
+  const resultsDiv = document.getElementById('results');
+  resultsDiv.innerHTML = '<h2>Fechas a observar:</h2>';
+  
+  // Convertir a fecha hebrea (considerando la oná)
+  const hebrewDate = gregorianToHebrew(lastDate, lastOna);
+  
+  // Mostrar la fecha ingresada en calendario hebreo
+  const infoDiv = document.createElement('div');
+  infoDiv.style.cssText = `
+    background: #e7f3ff; 
+    border: 1px solid #b3d9ff; 
+    color: #0066cc; 
+    padding: 15px; 
+    border-radius: 8px; 
+    margin-bottom: 20px;
+  `;
+  const lastOnaText = lastOna === 'day' ? '🌞 Día' : '🌙 Noche';
+  
+  // CORRECCIÓN: Mostrar la fecha gregoriana ingresada correctamente
+  // Sin convertir ni modificar, tal como la ingresó el usuario
+  const inputDate = new Date(lastDateStr + 'T12:00:00'); // Forzar hora medio día para evitar problemas de zona horaria
+  
+  infoDiv.innerHTML = `
+    <strong>📅 Fecha ingresada:</strong><br>
+    🗓️ ${inputDate.toLocaleDateString('es-ES', { 
+      weekday: 'long', 
+      year: 'numeric', 
+      month: 'long', 
+      day: 'numeric' 
+    })}<br>
+    🕍 ${formatHebrewDate(hebrewDate)}<br>
+    ⏰ ${lastOnaText}
+  `;
+  resultsDiv.appendChild(infoDiv);
+  
+  // Helper para renderizar resultados
+  function renderResult(title, date, ona, description) {
+    const hebrewDateCalc = gregorianToHebrew(date, ona);
+    const hebrewStr = formatHebrewDate(hebrewDateCalc);
+    const dow = date.getDay();
+    const isShabbat = (dow === 6);
+    
+    const div = document.createElement('div');
+    div.className = `result ${ona} ${isShabbat ? 'shabbat' : ''}`;
+    
+    const onaText = ona === 'day' ? '🌞 Día' : '🌙 Noche';
+    const shabbatText = isShabbat ? ' — 🕯️ Shabat' : '';
+    
+    div.innerHTML = `
+      <strong>${title}:</strong><br>
+      📅 ${date.toLocaleDateString('es-ES', { 
+        weekday: 'long', 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric' 
+      })}<br>
+      🕍 ${hebrewStr}<br>
+      ⏰ ${onaText}${shabbatText}<br>
+      <small style="color: #666;">${description}</small>
+    `;
+    
+    resultsDiv.appendChild(div);
+  }
+  
+  // 1. Véset hachodesh (misma fecha hebrea siguiente mes) usando búsqueda fiable
+  const vesetHachodesh = findNextHebrewSameDayNextMonth(lastDate, lastOna);
+  renderResult(
+    'Véset Hachodesh', 
+    vesetHachodesh, 
+    lastOna,
+    'Misma fecha del mes hebreo siguiente'
+  );
+  
+  // 2. Onat ha-benonit (30 días)
+  const benonit = new Date(lastDate);
+  benonit.setDate(benonit.getDate() + 30);
+  renderResult(
+    'Onat Ha-benonit', 
+    benonit, 
+    lastOna,
+    'Exactamente 30 días después de la última menstruación'
+  );
+  
+  // 3. Haflagá (si se proporciona duración del ciclo)
+  if (previousCycleStr && parseInt(previousCycleStr) >= 20) {
+    const cycleDays = parseInt(previousCycleStr);
+    const haflaga = new Date(lastDate);
+    haflaga.setDate(haflaga.getDate() + cycleDays);
+    renderResult(
+      'Haflagá', 
+      haflaga, 
+      lastOna,
+      `Basado en un ciclo de ${cycleDays} días`
+    );
+  }
+  
+  // Agregar nota importante
+  const noteDiv = document.createElement('div');
+  noteDiv.style.cssText = `
+    background: #fff3cd; 
+    border: 1px solid #ffeeba; 
+    color: #856404; 
+    padding: 15px; 
+    border-radius: 8px; 
+    margin-top: 20px;
+  `;
+  noteDiv.innerHTML = `
+    <strong>⚠️ Nota importante:</strong><br>
+    Esta calculadora proporciona fechas aproximadas para fines educativos. 
+    Para observancia halájica precisa, consulte siempre con una autoridad rabínica competente, 
+    ya que hay muchas variables adicionales que deben considerarse según cada caso particular.
+  `;
+  resultsDiv.appendChild(noteDiv);
+}
+
+function showError(message) {
+  const resultsDiv = document.getElementById('results');
+  resultsDiv.innerHTML = `<div class="error">${message}</div>`;
+}
+
+// Establecer fecha máxima como hoy
+document.getElementById('lastDate').max = new Date().toISOString().split('T')[0];
+</script>
+</body>
+</html>
